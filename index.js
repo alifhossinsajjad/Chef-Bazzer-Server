@@ -142,6 +142,42 @@ async function run() {
       res.send(result);
     });
 
+    // Reviews APIs
+    app.get("/reviews/:foodId", async (req, res) => {
+      const foodId = req.params.foodId;
+      const query = { foodId: foodId };
+      const result = await reviewsCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    app.post("/reviews", async (req, res) => {
+      const review = req.body;
+      const result = await reviewsCollection.insertOne(review);
+      res.send(result);
+    });
+
+    // Favorites APIs
+    app.post("/favorites", async (req, res) => {
+      const favorite = req.body;
+      const query = {
+        userEmail: favorite.userEmail,
+        mealId: favorite.mealId,
+      };
+      const existingFavorite = await favoritesCollection.findOne(query);
+      if (existingFavorite) {
+        return res.send({ message: "Already in favorites", insertedId: null });
+      }
+      const result = await favoritesCollection.insertOne(favorite);
+      res.send(result);
+    });
+
+    app.get("/favorites/:email", async (req, res) => {
+      const email = req.params.email;
+      const query = { userEmail: email };
+      const result = await favoritesCollection.find(query).toArray();
+      res.send(result);
+    });
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
