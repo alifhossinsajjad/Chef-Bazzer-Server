@@ -49,6 +49,8 @@ async function run() {
     const db = client.db("chefDB");
     const usersCollections = db.collection("users");
     const mealsCollections = db.collection("meals");
+    const reviewsCollection = db.collection("reviews");
+    const favoritesCollection = db.collection("favorites");
 
     //get the role base users
     app.get("/users/:email/role", async (req, res) => {
