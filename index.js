@@ -101,10 +101,37 @@ async function run() {
       res.send(result);
     });
 
-    //get the all meals
+    //get the all meals with search and pagination
     app.get("/meals", async (req, res) => {
-      const result = await mealsCollections.find().toArray();
-      res.send(result);
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 9;
+        const search = req.query.search || "";
+
+        const query = {
+          $or: [
+            { ChefName: { $regex: search, $options: "i" } },
+            // Can add more fields to search here if needed, e.g., Category, Description
+          ],
+        };
+
+        const total = await mealsCollections.countDocuments(query);
+        const result = await mealsCollections
+          .find(query)
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .toArray();
+
+        res.send({
+          meals: result,
+          total,
+          totalPages: Math.ceil(total / limit),
+          currentPage: page,
+        });
+      } catch (error) {
+        console.error("Error fetching meals:", error);
+        res.status(500).send({ message: "Error fetching meals" });
+      }
     });
 
     // Send a ping to confirm a successful connection
