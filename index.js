@@ -3,7 +3,7 @@ const cors = require("cors");
 const app = express();
 require("dotenv").config();
 
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const stripe = require("stripe")(process.env.PAYMENT_GATEWAY_API_KEY);
 
@@ -109,10 +109,7 @@ async function run() {
         const search = req.query.search || "";
 
         const query = {
-          $or: [
-            { ChefName: { $regex: search, $options: "i" } },
-            // Can add more fields to search here if needed, e.g., Category, Description
-          ],
+          $or: [{ ChefName: { $regex: search, $options: "i" } }],
         };
 
         const total = await mealsCollections.countDocuments(query);
@@ -132,6 +129,15 @@ async function run() {
         console.error("Error fetching meals:", error);
         res.status(500).send({ message: "Error fetching meals" });
       }
+    });
+
+    //get meals details
+
+    app.get("/meals-details/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await mealsCollections.findOne(query);
+      res.send(result);
     });
 
     // Send a ping to confirm a successful connection
