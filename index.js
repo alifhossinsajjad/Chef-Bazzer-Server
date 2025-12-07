@@ -22,11 +22,33 @@ admin.initializeApp({
 });
 
 const crypto = require("crypto");
-const { log } = require("console");
+const { log, error } = require("console");
 
 // middelware
 app.use(express.json());
 app.use(cors());
+
+//verify FB Token
+const verifyFBToken = async (req, res, next) => {
+  const token = req.headers?.authorization;
+
+  if (!token) {
+    return res
+      .status(401)
+      .send({ error: true, message: "unauthorized Access" });
+  }
+  try {
+    const idToken = token.split(" ")[1];
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    req.decoded_email = decodedToken.email;
+  } catch (error) {
+    return res
+      .status(401)
+      .send({ error: true, message: "unauthorized access" });
+  }
+
+  next();
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@chefdb.qtrpqbo.mongodb.net/?appName=chefDB`;
 
@@ -175,6 +197,22 @@ async function run() {
       const email = req.params.email;
       const query = { userEmail: email };
       const result = await favoritesCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    // Check if partial favorite
+    app.get("/favorites/:email/:mealId", async (req, res) => {
+      const { email, mealId } = req.params;
+      const query = { userEmail: email, mealId: mealId };
+      const result = await favoritesCollection.findOne(query);
+      res.send({ isFavorite: !!result, _id: result?._id });
+    });
+
+    // Delete favorite
+    app.delete("/favorites/:email/:mealId", async (req, res) => {
+      const { email, mealId } = req.params;
+      const query = { userEmail: email, mealId: mealId };
+      const result = await favoritesCollection.deleteOne(query);
       res.send(result);
     });
 
