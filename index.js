@@ -82,15 +82,31 @@ async function run() {
     const reviewsCollection = db.collection("reviews");
     const favoritesCollection = db.collection("favorites");
     const orderCollection = db.collection("orders");
-    const trackingsCollections = db.collection("trackings");
 
+    //middleware admin before allowing admin activity
+    //must be used after verifyFBToken middleware
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await usersCollections.findOne(query);
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
 
+    //verify for chef
+    const verifyChef = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await usersCollections.findOne(query);
+      if (!user || user.role !== " rider") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
 
-
-
-
-
-//tracking middle ware 
+    //tracking middle ware
     const logTracking = async (trackingId, status) => {
       const log = {
         trackingId,
@@ -102,10 +118,24 @@ async function run() {
       return result;
     };
 
+    //this api for admin when hw search a user
 
-
-
-
+    app.get("/users", verifyFBToken, async (req, res) => {
+      const search = req.body.search;
+      const query = {};
+      if (search) {
+        query.$or = [
+          { name: { $regex: search, $options: "i" } },
+          { email: { $regex: search, $options: "i" } },
+        ];
+      }
+      const cursor = usersCollections
+        .find(query)
+        .sort({ createdAt: -1 })
+        .limit(20);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
 
     //get the role base users
     app.get("/users/:email/role", async (req, res) => {
@@ -248,42 +278,51 @@ async function run() {
       res.send(result);
     });
 
-    // Orders get APIs
-    // app.get("/orders/:email", verifyFBToken, async (req, res) => {
-    //   try {
-    //     const email = req.params.email;
-    //     const tokenEmail = req.decoded_email;
-    //     if (email !== tokenEmail) {
-    //       return res
-    //         .status(403)
-    //         .send({ error: true, message: "Forbidden access" });
-    //     }
-    //     const query = { userEmail: email };
-    //     const result = await orderCollection
-    //       .find(query)
-    //       .sort({ orderTime: -1 })
-    //       .toArray();
-    //     res.send(result);
-    //   } catch (error) {
-    //     console.error("Error fetching orders:", error);
-    //     res.status(500).send({ error: true, message: "Internal server error" });
-    //   }
-    // });
-
-    //order post api
-
-    app.post("/orders",  async (req, res) => {
+    // Order API
+    app.post("/orders", async (req, res) => {
       const order = req.body;
-      const trackingId = generateTrackingId();
-
-      order.createdAt = new Date().toLocaleString()
-      order.trackingId = trackingId
-
-      logTracking(trackingId, "order_created")
-      const result = await orderCollection.insertOne(order)
-
+      const result = await orderCollection.insertOne(order);
       res.send(result);
     });
+
+    //payment api
+
+    app.post("/create-checkout-session", async (req, res) => {
+      const paymentInfo = req.body;
+
+      const amount = parseInt(paymentInfo.price) * 100;
+      const session = await stripe.checkout.session.create({
+        line_items: [
+          {
+            price_data: {
+              currency: "USD",
+              product_data: {
+                name: `order payment for ${paymentInfo.mealName}`,
+              },
+              unit_amount: amount,
+            },
+            quantity: 1,
+          },
+        ],
+        mode: "payment",
+        customer_email: paymentInfo.userEmail,
+        metadata: {
+          foodId: paymentInfo.parcelId,
+          mealName: paymentInfo.mealName,
+          trackingId: paymentInfo.trackingId,
+        },
+        success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancled`,
+      });
+
+      res.send({ url: session.url });
+    });
+
+//payment success
+
+
+
+
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
