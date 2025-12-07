@@ -24,6 +24,14 @@ admin.initializeApp({
 const crypto = require("crypto");
 const { log, error } = require("console");
 
+function generateTrackingId() {
+  const prefix = "PKG";
+  const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
+  const randomHex = crypto.randomBytes(4).toString("hex").toUpperCase();
+
+  return `${prefix}-${date}-${randomHex}`;
+}
+
 // middelware
 app.use(express.json());
 app.use(cors());
@@ -73,6 +81,31 @@ async function run() {
     const mealsCollections = db.collection("meals");
     const reviewsCollection = db.collection("reviews");
     const favoritesCollection = db.collection("favorites");
+    const orderCollection = db.collection("orders");
+    const trackingsCollections = db.collection("trackings");
+
+
+
+
+
+
+
+//tracking middle ware 
+    const logTracking = async (trackingId, status) => {
+      const log = {
+        trackingId,
+        status,
+        details: status.split("_").join(" "),
+        createdAt: new Date(),
+      };
+      const result = await trackingsCollections.insertOne(log);
+      return result;
+    };
+
+
+
+
+
 
     //get the role base users
     app.get("/users/:email/role", async (req, res) => {
@@ -156,7 +189,6 @@ async function run() {
     });
 
     //get meals details
-
     app.get("/meals-details/:id", async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
@@ -213,6 +245,43 @@ async function run() {
       const { email, mealId } = req.params;
       const query = { userEmail: email, mealId: mealId };
       const result = await favoritesCollection.deleteOne(query);
+      res.send(result);
+    });
+
+    // Orders get APIs
+    // app.get("/orders/:email", verifyFBToken, async (req, res) => {
+    //   try {
+    //     const email = req.params.email;
+    //     const tokenEmail = req.decoded_email;
+    //     if (email !== tokenEmail) {
+    //       return res
+    //         .status(403)
+    //         .send({ error: true, message: "Forbidden access" });
+    //     }
+    //     const query = { userEmail: email };
+    //     const result = await orderCollection
+    //       .find(query)
+    //       .sort({ orderTime: -1 })
+    //       .toArray();
+    //     res.send(result);
+    //   } catch (error) {
+    //     console.error("Error fetching orders:", error);
+    //     res.status(500).send({ error: true, message: "Internal server error" });
+    //   }
+    // });
+
+    //order post api
+
+    app.post("/orders",  async (req, res) => {
+      const order = req.body;
+      const trackingId = generateTrackingId();
+
+      order.createdAt = new Date().toLocaleString()
+      order.trackingId = trackingId
+
+      logTracking(trackingId, "order_created")
+      const result = await orderCollection.insertOne(order)
+
       res.send(result);
     });
 
