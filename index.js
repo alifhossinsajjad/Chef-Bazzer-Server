@@ -283,9 +283,19 @@ async function run() {
     // Order API
     app.post("/orders", async (req, res) => {
       const order = req.body;
+      const trackingId = generateTrackingId();
+
+      // order created time
+      // const createdAt = new Date();
+      order.createdAt = new Date();
+      order.trackingId = trackingId;
+
+      logTracking(trackingId, "parcel_created");
+
       const result = await orderCollection.insertOne(order);
       res.send(result);
     });
+
 
     //payment api
 
@@ -375,11 +385,30 @@ async function run() {
           });
         }
       }
-      res.send({success: true})
+      res.send({ success: true });
     });
 
+    //payment history
+    app.get("/payments", async (req, res) => {
+      const query = {};
+      const { email } = req.query;
 
-   
+      if (email) {
+        query.customerEmail = email;
+
+        if (email !== req.decoded_email) {
+          return res
+            .status(403)
+            .send({ error: 1, message: "forbidden access" });
+        }
+      }
+      const options = {
+        sort: { paidAt: -1 },
+      };
+      const cursor = paymentCollections.find(query, options);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
