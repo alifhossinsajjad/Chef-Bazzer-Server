@@ -82,6 +82,8 @@ async function run() {
     const reviewsCollection = db.collection("reviews");
     const favoritesCollection = db.collection("favorites");
     const orderCollection = db.collection("orders");
+    const paymentCollections = db.collection("payments");
+    const trackingsCollections = db.collection("trackings");
 
     //middleware admin before allowing admin activity
     //must be used after verifyFBToken middleware
@@ -310,6 +312,7 @@ async function run() {
           foodId: paymentInfo.parcelId,
           mealName: paymentInfo.mealName,
           trackingId: paymentInfo.trackingId,
+          name: paymentInfo.userName,
         },
         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancled`,
@@ -318,11 +321,65 @@ async function run() {
       res.send({ url: session.url });
     });
 
-//payment success
+    //payment success status update
+    app.patch("/payment-success", async (req, res) => {
+      const sessionId = req.query.session_id;
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      const transactionId = session.payment_intent;
+      const query = { transactionId: transactionId };
+      const existingPayment = await paymentCollections.findOne(query);
+      if (existingPayment) {
+        return res.send({
+          success: true,
+          message: "payment already done",
+          transactionId,
+          trackingId: existingPayment.trackingId,
+        });
+      }
+
+      const trackingId = session.metadata.trackingId;
+
+      if (session.payment_status === "paid") {
+        const id = session.metadata.foodId;
+        const filter = { _id: new ObjectId(id) };
+        const update = {
+          $set: {
+            payment_status: "paid",
+            orderStatus: "pending-pickup",
+          },
+        };
+        const result = await mealsCollections.updateOne(filter, update);
+        const payment = {
+          amount: session.amount_total / 100,
+          currency: session.currency,
+          name: session.metadata.userName,
+          transactionId: session.payment_intent,
+          customerEmail: session.userEmail,
+          foodId: session.metadata.foodId,
+          paymentStatus: session.payment_status,
+          mealName: session.metadata.mealName,
+          paidAt: new Date().toLocaleString(),
+          trackingId: trackingId,
+        };
+
+        if (session.payment_status === "paid") {
+          const result = await paymentCollections.insertOne(payment);
+          logTracking(trackingId, "order_paid");
+          return res.send({
+            success: true,
+            modifiedCount: result,
+            paymentInfo: resultPayment,
+            transactionId: session.payment_intent,
+            trackingId: trackingId,
+            customerEmail: session.userEmail,
+          });
+        }
+      }
+      res.send({success: true})
+    });
 
 
-
-
+   
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
