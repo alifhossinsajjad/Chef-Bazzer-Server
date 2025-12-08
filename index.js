@@ -11,11 +11,9 @@ const port = process.env.Port || 3000;
 
 const admin = require("firebase-admin");
 
-const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
-  "utf8"
-);
-
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
 const serviceAccount = JSON.parse(decoded);
+
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -39,7 +37,7 @@ app.use(cors());
 //verify FB Token
 const verifyFBToken = async (req, res, next) => {
   const token = req.headers?.authorization;
-
+  // console.log(token);
   if (!token) {
     return res
       .status(401)
@@ -48,8 +46,10 @@ const verifyFBToken = async (req, res, next) => {
   try {
     const idToken = token.split(" ")[1];
     const decodedToken = await admin.auth().verifyIdToken(idToken);
+    // console.log('decoded',decodedToken);
     req.decoded_email = decodedToken.email;
   } catch (error) {
+    // console.log('token error',error);
     return res
       .status(401)
       .send({ error: true, message: "unauthorized access" });
@@ -84,6 +84,7 @@ async function run() {
     const orderCollection = db.collection("orders");
     const paymentCollections = db.collection("payments");
     const trackingsCollections = db.collection("trackings");
+    const chefsCollection = db.collection("chefs");
 
     //middleware admin before allowing admin activity
     //must be used after verifyFBToken middleware
@@ -102,7 +103,7 @@ async function run() {
       const email = req.decoded_email;
       const query = { email };
       const user = await usersCollections.findOne(query);
-      if (!user || user.role !== " rider") {
+      if (!user || user.role !== "chef") {
         return res.status(403).send({ message: "forbidden access" });
       }
       next();
@@ -120,10 +121,9 @@ async function run() {
       return result;
     };
 
-    //this api for admin when hw search a user
-
+    //this api for admin when he search a user
     app.get("/users", verifyFBToken, async (req, res) => {
-      const search = req.body.search;
+      const search = req.query.search;
       const query = {};
       if (search) {
         query.$or = [
@@ -206,6 +206,30 @@ async function run() {
         const result = await usersCollections.updateOne(query, updateDoc);
 
         res.send(result);
+      }
+    );
+
+    // Update user status (fraud/active)
+    app.patch(
+      "/users/:id/status",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const { status } = req.body;
+          const query = { _id: new ObjectId(id) };
+          const updateDoc = {
+            $set: {
+              status: status,
+            },
+          };
+          const result = await usersCollections.updateOne(query, updateDoc);
+          res.send(result);
+        } catch (error) {
+          console.error("Error updating user status:", error);
+          res.status(500).send({ error: true, message: "Failed to update status" });
+        }
       }
     );
 
@@ -359,6 +383,8 @@ async function run() {
       }
     });
 
+
+
     app.post("/orders", async (req, res) => {
       const order = req.body;
       const trackingId = generateTrackingId();
@@ -406,6 +432,7 @@ async function run() {
           customer_email: paymentInfo.userEmail,
           metadata: {
             orderId: paymentInfo.orderId,
+            foodName: paymentInfo.foodName,
             mealName: paymentInfo.mealName,
             trackingId: paymentInfo.trackingId,
             userName: paymentInfo.userName,
@@ -534,6 +561,88 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
+
+
+    //chef and admin role base api
+
+    app.post("/chefs", async (req, res) => {
+      const chef = req.body;
+      chef.status = "pending";
+      chef.createdAt = new Date();
+
+      const result = await chefsCollection.insertOne(chef);
+      res.send(result);
+    });
+
+    //chef and admin get api
+
+    app.get('/chefs', async (req, res) => {
+      const { status, workStatus } = req.query;
+      const query = {};
+
+
+      if (status) {
+        query.status = status
+      }
+
+      if (workStatus) {
+        query.workStatus = workStatus;
+      }
+
+      const cursor = chefsCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result)
+
+    })
+
+    // PATCH endpoint for approving/rejecting chef requests
+    app.patch("/chefs/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status, email } = req.body;
+
+        // Update the request status in chefs collection
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            status: status,
+          },
+        };
+
+        const result = await chefsCollection.updateOne(filter, updateDoc);
+
+        // If approved, update user role
+        if (status === "approved") {
+          const request = await chefsCollection.findOne(filter);
+
+          if (request) {
+            const userFilter = { email: request.userEmail };
+            const userUpdate = {
+              $set: {},
+            };
+
+            // If request type is chef, generate ChefId and set role
+            if (request.requestType === "chef") {
+              const chefId = `chef-${Math.floor(1000 + Math.random() * 9000)}`;
+              userUpdate.$set.role = "chef";
+              userUpdate.$set.chefId = chefId;
+            }
+            // If request type is admin, set role to admin
+            else if (request.requestType === "admin") {
+              userUpdate.$set.role = "admin";
+            }
+
+            await usersCollections.updateOne(userFilter, userUpdate);
+          }
+        }
+
+        res.send(result);
+      } catch (error) {
+        console.error("Error updating chef request:", error);
+        res.status(500).send({ error: true, message: "Failed to update request" });
+      }
+    });
+
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
