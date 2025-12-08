@@ -190,6 +190,25 @@ async function run() {
       res.send(result);
     });
 
+    app.patch(
+      "/users/:id/role",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const roleInfo = req.body;
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            role: roleInfo.role,
+          },
+        };
+        const result = await usersCollections.updateOne(query, updateDoc);
+
+        res.send(result);
+      }
+    );
+
     //get the all meals with search and pagination
     app.get("/meals", async (req, res) => {
       try {
@@ -229,6 +248,7 @@ async function run() {
     });
 
     // Reviews APIs
+
     app.get("/reviews/:foodId", async (req, res) => {
       const foodId = req.params.foodId;
       const query = { foodId: foodId };
@@ -239,6 +259,37 @@ async function run() {
     app.post("/reviews", async (req, res) => {
       const review = req.body;
       const result = await reviewsCollection.insertOne(review);
+      res.send(result);
+    });
+
+    app.get("/reviews", async (req, res) => {
+      const email = req.query.email;
+      let query = {};
+      if (email) {
+        query = { email: email };
+      }
+      const result = await reviewsCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    app.delete("/reviews/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await reviewsCollection.deleteOne(query);
+      res.send(result);
+    });
+
+    app.patch("/reviews/:id", async (req, res) => {
+      const id = req.params.id;
+      const { rating, comment } = req.body;
+      const filter = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          rating: rating,
+          comment: comment,
+        },
+      };
+      const result = await reviewsCollection.updateOne(filter, updateDoc);
       res.send(result);
     });
 
@@ -281,6 +332,33 @@ async function run() {
     });
 
     // Order API
+
+    app.get("/orders", async (req, res) => {
+      const query = {};
+      const { email, orderStatus } = req.query;
+
+      if (email) {
+        query.userEmail = email;
+      }
+
+      if (orderStatus) {
+        query.orderStatus = orderStatus;
+      }
+
+      const options = {
+        sort: { createdAt: -1 },
+      };
+
+      try {
+        const cursor = orderCollection.find(query, options);
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (error) {
+        console.error("Error fetching orders:", error);
+        res.status(500).send({ message: "Error fetching orders" });
+      }
+    });
+
     app.post("/orders", async (req, res) => {
       const order = req.body;
       const trackingId = generateTrackingId();
@@ -296,96 +374,142 @@ async function run() {
       res.send(result);
     });
 
+    app.delete("/orders/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await orderCollection.deleteOne(query);
+      res.send(result);
+    });
 
     //payment api
 
     app.post("/create-checkout-session", async (req, res) => {
       const paymentInfo = req.body;
+      console.log("Creating checkout session for:", paymentInfo);
+      const amount = Math.round(parseFloat(paymentInfo.price) * 100);
 
-      const amount = parseInt(paymentInfo.price) * 100;
-      const session = await stripe.checkout.session.create({
-        line_items: [
-          {
-            price_data: {
-              currency: "USD",
-              product_data: {
-                name: `order payment for ${paymentInfo.mealName}`,
+      try {
+        const session = await stripe.checkout.sessions.create({
+          line_items: [
+            {
+              price_data: {
+                currency: "USD",
+                product_data: {
+                  name: `Order Payment for ${paymentInfo.mealName}`,
+                },
+                unit_amount: amount,
               },
-              unit_amount: amount,
+              quantity: 1,
             },
-            quantity: 1,
+          ],
+          mode: "payment",
+          customer_email: paymentInfo.userEmail,
+          metadata: {
+            orderId: paymentInfo.orderId,
+            mealName: paymentInfo.mealName,
+            trackingId: paymentInfo.trackingId,
+            userName: paymentInfo.userName,
+            userEmail: paymentInfo.userEmail,
           },
-        ],
-        mode: "payment",
-        customer_email: paymentInfo.userEmail,
-        metadata: {
-          foodId: paymentInfo.parcelId,
-          mealName: paymentInfo.mealName,
-          trackingId: paymentInfo.trackingId,
-          name: paymentInfo.userName,
-        },
-        success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancled`,
-      });
+          success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancled`,
+        });
 
-      res.send({ url: session.url });
+        res.send({ url: session.url });
+      } catch (error) {
+        console.error("Stripe session creation error:", error);
+        res
+          .status(500)
+          .send({ error: true, message: "Failed to create checkout session" });
+      }
     });
 
     //payment success status update
     app.patch("/payment-success", async (req, res) => {
       const sessionId = req.query.session_id;
-      const session = await stripe.checkout.sessions.retrieve(sessionId);
-      const transactionId = session.payment_intent;
-      const query = { transactionId: transactionId };
-      const existingPayment = await paymentCollections.findOne(query);
-      if (existingPayment) {
-        return res.send({
-          success: true,
-          message: "payment already done",
-          transactionId,
-          trackingId: existingPayment.trackingId,
-        });
-      }
+      console.log("Processing payment success for session:", sessionId);
 
-      const trackingId = session.metadata.trackingId;
+      try {
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        console.log(
+          "Retrieved session payment status:",
+          session.payment_status
+        );
+        const transactionId = session.payment_intent;
 
-      if (session.payment_status === "paid") {
-        const id = session.metadata.foodId;
-        const filter = { _id: new ObjectId(id) };
-        const update = {
-          $set: {
-            payment_status: "paid",
-            orderStatus: "pending-pickup",
-          },
-        };
-        const result = await mealsCollections.updateOne(filter, update);
-        const payment = {
-          amount: session.amount_total / 100,
-          currency: session.currency,
-          name: session.metadata.userName,
-          transactionId: session.payment_intent,
-          customerEmail: session.userEmail,
-          foodId: session.metadata.foodId,
-          paymentStatus: session.payment_status,
-          mealName: session.metadata.mealName,
-          paidAt: new Date().toLocaleString(),
-          trackingId: trackingId,
-        };
+        const query = { transactionId: transactionId };
+        const existingPayment = await paymentCollections.findOne(query);
 
-        if (session.payment_status === "paid") {
-          const result = await paymentCollections.insertOne(payment);
-          logTracking(trackingId, "order_paid");
+        if (existingPayment) {
+          console.log(
+            "Payment already recorded for transaction:",
+            transactionId
+          );
           return res.send({
             success: true,
-            modifiedCount: result,
-            paymentInfo: resultPayment,
-            transactionId: session.payment_intent,
-            trackingId: trackingId,
-            customerEmail: session.userEmail,
+            message: "Payment already processed",
+            transactionId,
+            trackingId: existingPayment.trackingId,
           });
         }
+
+        const trackingId = session.metadata.trackingId;
+        const orderId = session.metadata.orderId;
+
+        console.log("Metadata OrderID:", orderId);
+
+        if (session.payment_status === "paid") {
+          if (!ObjectId.isValid(orderId)) {
+            console.error("Invalid Order ID from metadata:", orderId);
+            return res
+              .status(400)
+              .send({ error: true, message: "Invalid Order ID" });
+          }
+
+          const filter = { _id: new ObjectId(orderId) };
+          const update = {
+            $set: {
+              paymentStatus: "paid",
+              orderStatus: "pending-pickup",
+            },
+          };
+
+          const updateResult = await orderCollection.updateOne(filter, update);
+          console.log("Order update result:", updateResult);
+
+          const payment = {
+            amount: session.amount_total / 100,
+            currency: session.currency,
+            name: session.metadata.userName,
+            transactionId: session.payment_intent,
+            userEmail:
+              session.customer_details?.email || session.metadata.userEmail,
+            orderId: orderId,
+            paymentStatus: session.payment_status,
+            mealName: session.metadata.mealName,
+            paidAt: new Date(),
+            trackingId: trackingId,
+          };
+
+          const paymentResult = await paymentCollections.insertOne(payment);
+
+          await logTracking(trackingId, "order_paid");
+
+          return res.send({
+            success: true,
+            modifiedCount: updateResult.modifiedCount,
+            paymentId: paymentResult.insertedId,
+            transactionId: session.payment_intent,
+            trackingId: trackingId,
+          });
+        }
+        res.send({ success: false, message: "Payment not paid" });
+      } catch (error) {
+        console.error("Payment success error:", error);
+        res
+          .status(500)
+          .send({ error: true, message: "Payment confirmation failed" });
       }
-      res.send({ success: true });
     });
 
     //payment history
@@ -394,14 +518,15 @@ async function run() {
       const { email } = req.query;
 
       if (email) {
-        query.customerEmail = email;
+        query.userEmail = email;
+        // if (email !== req.decoded_email) {
+        //   return res
+        //     .status(403)
+        //     .send({ error: 1, message: "forbidden access" });
+        // }
 
-        if (email !== req.decoded_email) {
-          return res
-            .status(403)
-            .send({ error: 1, message: "forbidden access" });
-        }
       }
+
       const options = {
         sort: { paidAt: -1 },
       };
