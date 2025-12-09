@@ -11,9 +11,10 @@ const port = process.env.Port || 3000;
 
 const admin = require("firebase-admin");
 
-const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8"
+);
 const serviceAccount = JSON.parse(decoded);
-
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -162,6 +163,7 @@ async function run() {
           success: true,
           role: user.role || "user",
           status: user.status || "active",
+          chefId: user.chefId || null,
         });
       } catch (error) {
         console.error("Error fetching user role:", error);
@@ -228,7 +230,9 @@ async function run() {
           res.send(result);
         } catch (error) {
           console.error("Error updating user status:", error);
-          res.status(500).send({ error: true, message: "Failed to update status" });
+          res
+            .status(500)
+            .send({ error: true, message: "Failed to update status" });
         }
       }
     );
@@ -271,8 +275,62 @@ async function run() {
       res.send(result);
     });
 
-    // Reviews APIs
+    // Get meals by chef ID
+    app.get("/meals/chef/:chefId", async (req, res) => {
+      try {
+        const chefId = req.params.chefId;
+        const query = { ChefId: chefId };
+        const result = await mealsCollections.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        console.error("Error fetching chef meals:", error);
+        res.status(500).send({ error: true, message: "Failed to fetch meals" });
+      }
+    });
 
+    // Create new meal
+    app.post("/meals", verifyFBToken, async (req, res) => {
+      try {
+        const mealData = req.body;
+        const result = await mealsCollections.insertOne(mealData);
+        res.send(result);
+      } catch (error) {
+        console.error("Error creating meal:", error);
+        res.status(500).send({ error: true, message: "Failed to create meal" });
+      }
+    });
+
+    // Update meal
+    app.patch("/meals/:id", verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const mealData = req.body;
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: mealData,
+        };
+        const result = await mealsCollections.updateOne(filter, updateDoc);
+        res.send(result);
+      } catch (error) {
+        console.error("Error updating meal:", error);
+        res.status(500).send({ error: true, message: "Failed to update meal" });
+      }
+    });
+
+    // Delete meal
+    app.delete("/meals/:id", verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+        const result = await mealsCollections.deleteOne(filter);
+        res.send(result);
+      } catch (error) {
+        console.error("Error deleting meal:", error);
+        res.status(500).send({ error: true, message: "Failed to delete meal" });
+      }
+    });
+
+    // Reviews APIs
     app.get("/reviews/:foodId", async (req, res) => {
       const foodId = req.params.foodId;
       const query = { foodId: foodId };
@@ -383,18 +441,17 @@ async function run() {
       }
     });
 
-
-
     app.post("/orders", async (req, res) => {
       const order = req.body;
       const trackingId = generateTrackingId();
 
-      // order created time
-      // const createdAt = new Date();
+      // Set initial order status and payment status
       order.createdAt = new Date();
       order.trackingId = trackingId;
+      order.orderStatus = "pending-chef-approval";
+      order.paymentStatus = "unpaid";
 
-      logTracking(trackingId, "parcel_created");
+      logTracking(trackingId, "order_requested");
 
       const result = await orderCollection.insertOne(order);
       res.send(result);
@@ -407,6 +464,117 @@ async function run() {
       res.send(result);
     });
 
+    // Chef accept order endpoint
+    app.patch("/orders/:id/accept",verifyChef, verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+        const order = await orderCollection.findOne(filter);
+        if (!order) {
+          return res
+            .status(404)
+            .send({ error: true, message: "Order not found" });
+        }
+
+        if (order.orderStatus !== "pending-chef-approval") {
+          return res
+            .status(400)
+            .send({ error: true, message: "Order is not pending approval" });
+        }
+
+        const updateDoc = {
+          $set: {
+            orderStatus: "accepted-by-chef",
+            acceptedAt: new Date(),
+          },
+        };
+
+        const result = await orderCollection.updateOne(filter, updateDoc);
+        await logTracking(order.trackingId, "chef_accepted");
+
+        res.send(result);
+      } catch (error) {
+        console.error("Error accepting order:", error);
+        res
+          .status(500)
+          .send({ error: true, message: "Failed to accept order" });
+      }
+    });
+
+
+    // Chef cancel order endpoint
+    app.patch("/orders/:id/cancel",verifyChef, verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+
+        const order = await orderCollection.findOne(filter);
+        if (!order) {
+          return res
+            .status(404)
+            .send({ error: true, message: "Order not found" });
+        }
+
+        const updateDoc = {
+          $set: {
+            orderStatus: "cancelled",
+            cancelledAt: new Date(),
+          },
+        };
+
+        const result = await orderCollection.updateOne(filter, updateDoc);
+        await logTracking(order.trackingId, "order_cancelled");
+
+        res.send(result);
+      } catch (error) {
+        console.error("Error cancelling order:", error);
+        res
+          .status(500)
+          .send({ error: true, message: "Failed to cancel order" });
+      }
+    });
+
+    // Chef deliver order endpoint
+    app.patch("/orders/:id/deliver",verifyChef, verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+
+        const order = await orderCollection.findOne(filter);
+        if (!order) {
+          return res
+            .status(404)
+            .send({ error: true, message: "Order not found" });
+        }
+
+        if (
+          order.orderStatus !== "accepted-by-chef" &&
+          order.orderStatus !== "pending-pickup"
+        ) {
+          return res.status(400).send({
+            error: true,
+            message: "Order must be accepted before delivery",
+          });
+        }
+
+        const updateDoc = {
+          $set: {
+            orderStatus: "delivered",
+            deliveredAt: new Date(),
+          },
+        };
+
+        const result = await orderCollection.updateOne(filter, updateDoc);
+        await logTracking(order.trackingId, "order_delivered");
+
+        res.send(result);
+      } catch (error) {
+        console.error("Error delivering order:", error);
+        res
+          .status(500)
+          .send({ error: true, message: "Failed to mark as delivered" });
+      }
+    });
     //payment api
 
     app.post("/create-checkout-session", async (req, res) => {
@@ -483,8 +651,6 @@ async function run() {
         const trackingId = session.metadata.trackingId;
         const orderId = session.metadata.orderId;
 
-        console.log("Metadata OrderID:", orderId);
-
         if (session.payment_status === "paid") {
           if (!ObjectId.isValid(orderId)) {
             console.error("Invalid Order ID from metadata:", orderId);
@@ -494,6 +660,22 @@ async function run() {
           }
 
           const filter = { _id: new ObjectId(orderId) };
+
+          // Verify order is accepted by chef before processing payment
+          const order = await orderCollection.findOne(filter);
+          if (!order) {
+            return res
+              .status(404)
+              .send({ error: true, message: "Order not found" });
+          }
+
+          if (order.orderStatus !== "accepted-by-chef") {
+            return res.status(400).send({
+              error: true,
+              message: "Order must be accepted by chef before payment",
+            });
+          }
+
           const update = {
             $set: {
               paymentStatus: "paid",
@@ -540,7 +722,7 @@ async function run() {
     });
 
     //payment history
-    app.get("/payments", async (req, res) => {
+    app.get("/payments", verifyFBToken, async (req, res) => {
       const query = {};
       const { email } = req.query;
 
@@ -551,7 +733,6 @@ async function run() {
         //     .status(403)
         //     .send({ error: 1, message: "forbidden access" });
         // }
-
       }
 
       const options = {
@@ -562,9 +743,7 @@ async function run() {
       res.send(result);
     });
 
-
     //chef and admin role base api
-
     app.post("/chefs", async (req, res) => {
       const chef = req.body;
       chef.status = "pending";
@@ -576,13 +755,12 @@ async function run() {
 
     //chef and admin get api
 
-    app.get('/chefs', async (req, res) => {
+    app.get("/chefs", verifyFBToken, async (req, res) => {
       const { status, workStatus } = req.query;
       const query = {};
 
-
       if (status) {
-        query.status = status
+        query.status = status;
       }
 
       if (workStatus) {
@@ -591,12 +769,12 @@ async function run() {
 
       const cursor = chefsCollection.find(query);
       const result = await cursor.toArray();
-      res.send(result)
+      res.send(result);
+    });
 
-    })
 
     // PATCH endpoint for approving/rejecting chef requests
-    app.patch("/chefs/:id", async (req, res) => {
+    app.patch("/chefs/:id", verifyFBToken, verifyAdmin, async (req, res) => {
       try {
         const id = req.params.id;
         const { status, email } = req.body;
@@ -639,9 +817,14 @@ async function run() {
         res.send(result);
       } catch (error) {
         console.error("Error updating chef request:", error);
-        res.status(500).send({ error: true, message: "Failed to update request" });
+        res
+          .status(500)
+          .send({ error: true, message: "Failed to update request" });
       }
     });
+
+
+
 
 
     // Send a ping to confirm a successful connection
