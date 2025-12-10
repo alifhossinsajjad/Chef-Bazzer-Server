@@ -289,7 +289,7 @@ async function run() {
     });
 
     // Create new meal
-    app.post("/meals", verifyFBToken, async (req, res) => {
+    app.post("/meals", async (req, res) => {
       try {
         const mealData = req.body;
         const result = await mealsCollections.insertOne(mealData);
@@ -301,7 +301,7 @@ async function run() {
     });
 
     // Update meal
-    app.patch("/meals/:id", verifyFBToken, async (req, res) => {
+    app.patch("/meals/:id",  async (req, res) => {
       try {
         const id = req.params.id;
         const mealData = req.body;
@@ -318,7 +318,7 @@ async function run() {
     });
 
     // Delete meal
-    app.delete("/meals/:id", verifyFBToken, async (req, res) => {
+    app.delete("/meals/:id",async (req, res) => {
       try {
         const id = req.params.id;
         const filter = { _id: new ObjectId(id) };
@@ -344,7 +344,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/reviews", async (req, res) => {
+     app.get("/reviews", async (req, res) => {
       const email = req.query.email;
       let query = {};
       if (email) {
@@ -353,6 +353,7 @@ async function run() {
       const result = await reviewsCollection.find(query).toArray();
       res.send(result);
     });
+ 
 
     app.delete("/reviews/:id", async (req, res) => {
       const id = req.params.id;
@@ -465,116 +466,127 @@ async function run() {
     });
 
     // Chef accept order endpoint
-    app.patch("/orders/:id/accept",verifyChef, verifyFBToken, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const filter = { _id: new ObjectId(id) };
-        const order = await orderCollection.findOne(filter);
-        if (!order) {
-          return res
-            .status(404)
-            .send({ error: true, message: "Order not found" });
+    app.patch(
+      "/orders/:id/accept",
+   
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const filter = { _id: new ObjectId(id) };
+          const order = await orderCollection.findOne(filter);
+          if (!order) {
+            return res
+              .status(404)
+              .send({ error: true, message: "Order not found" });
+          }
+
+          if (order.orderStatus !== "pending-chef-approval") {
+            return res
+              .status(400)
+              .send({ error: true, message: "Order is not pending approval" });
+          }
+
+          const updateDoc = {
+            $set: {
+              orderStatus: "accepted-by-chef",
+              acceptedAt: new Date(),
+            },
+          };
+
+          const result = await orderCollection.updateOne(filter, updateDoc);
+          await logTracking(order.trackingId, "chef_accepted");
+
+          res.send(result);
+        } catch (error) {
+          console.error("Error accepting order:", error);
+          res
+            .status(500)
+            .send({ error: true, message: "Failed to accept order" });
         }
-
-        if (order.orderStatus !== "pending-chef-approval") {
-          return res
-            .status(400)
-            .send({ error: true, message: "Order is not pending approval" });
-        }
-
-        const updateDoc = {
-          $set: {
-            orderStatus: "accepted-by-chef",
-            acceptedAt: new Date(),
-          },
-        };
-
-        const result = await orderCollection.updateOne(filter, updateDoc);
-        await logTracking(order.trackingId, "chef_accepted");
-
-        res.send(result);
-      } catch (error) {
-        console.error("Error accepting order:", error);
-        res
-          .status(500)
-          .send({ error: true, message: "Failed to accept order" });
       }
-    });
-
+    );
 
     // Chef cancel order endpoint
-    app.patch("/orders/:id/cancel",verifyChef, verifyFBToken, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const filter = { _id: new ObjectId(id) };
+    app.patch(
+      "/orders/:id/cancel",
+     
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const filter = { _id: new ObjectId(id) };
 
-        const order = await orderCollection.findOne(filter);
-        if (!order) {
-          return res
-            .status(404)
-            .send({ error: true, message: "Order not found" });
+          const order = await orderCollection.findOne(filter);
+          if (!order) {
+            return res
+              .status(404)
+              .send({ error: true, message: "Order not found" });
+          }
+
+          const updateDoc = {
+            $set: {
+              orderStatus: "cancelled",
+              cancelledAt: new Date(),
+            },
+          };
+
+          const result = await orderCollection.updateOne(filter, updateDoc);
+          await logTracking(order.trackingId, "order_cancelled");
+
+          res.send(result);
+        } catch (error) {
+          console.error("Error cancelling order:", error);
+          res
+            .status(500)
+            .send({ error: true, message: "Failed to cancel order" });
         }
-
-        const updateDoc = {
-          $set: {
-            orderStatus: "cancelled",
-            cancelledAt: new Date(),
-          },
-        };
-
-        const result = await orderCollection.updateOne(filter, updateDoc);
-        await logTracking(order.trackingId, "order_cancelled");
-
-        res.send(result);
-      } catch (error) {
-        console.error("Error cancelling order:", error);
-        res
-          .status(500)
-          .send({ error: true, message: "Failed to cancel order" });
       }
-    });
+    );
 
     // Chef deliver order endpoint
-    app.patch("/orders/:id/deliver",verifyChef, verifyFBToken, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const filter = { _id: new ObjectId(id) };
+    app.patch(
+      "/orders/:id/deliver",
+     
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const filter = { _id: new ObjectId(id) };
 
-        const order = await orderCollection.findOne(filter);
-        if (!order) {
-          return res
-            .status(404)
-            .send({ error: true, message: "Order not found" });
+          const order = await orderCollection.findOne(filter);
+          if (!order) {
+            return res
+              .status(404)
+              .send({ error: true, message: "Order not found" });
+          }
+
+          if (
+            order.orderStatus !== "accepted-by-chef" &&
+            order.orderStatus !== "pending-pickup"
+          ) {
+            return res.status(400).send({
+              error: true,
+              message: "Order must be accepted before delivery",
+            });
+          }
+
+          const updateDoc = {
+            $set: {
+              orderStatus: "delivered",
+              deliveredAt: new Date(),
+            },
+          };
+
+          const result = await orderCollection.updateOne(filter, updateDoc);
+          await logTracking(order.trackingId, "order_delivered");
+
+          res.send(result);
+        } catch (error) {
+          console.error("Error delivering order:", error);
+          res
+            .status(500)
+            .send({ error: true, message: "Failed to mark as delivered" });
         }
-
-        if (
-          order.orderStatus !== "accepted-by-chef" &&
-          order.orderStatus !== "pending-pickup"
-        ) {
-          return res.status(400).send({
-            error: true,
-            message: "Order must be accepted before delivery",
-          });
-        }
-
-        const updateDoc = {
-          $set: {
-            orderStatus: "delivered",
-            deliveredAt: new Date(),
-          },
-        };
-
-        const result = await orderCollection.updateOne(filter, updateDoc);
-        await logTracking(order.trackingId, "order_delivered");
-
-        res.send(result);
-      } catch (error) {
-        console.error("Error delivering order:", error);
-        res
-          .status(500)
-          .send({ error: true, message: "Failed to mark as delivered" });
       }
-    });
+    );
     //payment api
 
     app.post("/create-checkout-session", async (req, res) => {
@@ -772,7 +784,6 @@ async function run() {
       res.send(result);
     });
 
-
     // PATCH endpoint for approving/rejecting chef requests
     app.patch("/chefs/:id", verifyFBToken, verifyAdmin, async (req, res) => {
       try {
@@ -822,10 +833,6 @@ async function run() {
           .send({ error: true, message: "Failed to update request" });
       }
     });
-
-
-
-
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
