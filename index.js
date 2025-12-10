@@ -164,6 +164,7 @@ async function run() {
           role: user.role || "user",
           status: user.status || "active",
           chefId: user.chefId || null,
+          address : user.address ,
         });
       } catch (error) {
         console.error("Error fetching user role:", error);
