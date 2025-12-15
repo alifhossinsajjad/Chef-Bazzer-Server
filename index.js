@@ -164,7 +164,7 @@ async function run() {
           role: user.role || "user",
           status: user.status || "active",
           chefId: user.chefId || null,
-          address : user.address ,
+          address: user.address,
         });
       } catch (error) {
         console.error("Error fetching user role:", error);
@@ -302,7 +302,7 @@ async function run() {
     });
 
     // Update meal
-    app.patch("/meals/:id",  async (req, res) => {
+    app.patch("/meals/:id", async (req, res) => {
       try {
         const id = req.params.id;
         const mealData = req.body;
@@ -319,7 +319,7 @@ async function run() {
     });
 
     // Delete meal
-    app.delete("/meals/:id",async (req, res) => {
+    app.delete("/meals/:id", async (req, res) => {
       try {
         const id = req.params.id;
         const filter = { _id: new ObjectId(id) };
@@ -345,7 +345,7 @@ async function run() {
       res.send(result);
     });
 
-     app.get("/reviews", async (req, res) => {
+    app.get("/reviews", async (req, res) => {
       const email = req.query.email;
       let query = {};
       if (email) {
@@ -354,7 +354,6 @@ async function run() {
       const result = await reviewsCollection.find(query).toArray();
       res.send(result);
     });
- 
 
     app.delete("/reviews/:id", async (req, res) => {
       const id = req.params.id;
@@ -469,7 +468,7 @@ async function run() {
     // Chef accept order endpoint
     app.patch(
       "/orders/:id/accept",
-   
+
       async (req, res) => {
         try {
           const id = req.params.id;
@@ -510,7 +509,7 @@ async function run() {
     // Chef cancel order endpoint
     app.patch(
       "/orders/:id/cancel",
-     
+
       async (req, res) => {
         try {
           const id = req.params.id;
@@ -546,7 +545,7 @@ async function run() {
     // Chef deliver order endpoint
     app.patch(
       "/orders/:id/deliver",
-     
+
       async (req, res) => {
         try {
           const id = req.params.id;
